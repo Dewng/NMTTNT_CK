@@ -1,0 +1,53 @@
+{
+  "meta_info": {
+    "description": "Cấu hình khoảng cách và điểm thưởng",
+    "unit": "km"
+  },
+  "bonus_config": [
+    {
+      "condition": "same_location",
+      "max_diff": 0,
+      "points": 3,
+      "description": "Cùng một nơi ở"
+    },
+    {
+      "condition": "very_close",
+      "max_diff": 100,
+      "points": 2,
+      "description": "Rất gần (<100km)"
+    },
+    {
+      "condition": "close",
+      "max_diff": 300,
+      "points": 1,
+      "description": "Khá gần (<300km)"
+    }
+  ],
+  "locations": {
+    "Thành phố Hồ Chí Minh": 0, "Hồ Chí Minh": 0, "TP.HCM": 0,
+    "Bình Dương": 30, "Đồng Nai": 40, "Long An": 50,
+    "Tiền Giang": 70, "Bến Tre": 85, "Bà Rịa - Vũng Tàu": 90,
+    "Vũng Tàu": 90, "Tây Ninh": 100, "Bình Phước": 120,
+    "Vĩnh Long": 135, "Đồng Tháp": 145, "Trà Vinh": 150,
+    "Cần Thơ": 170, "Bình Thuận": 180, "Phan Thiết": 180,
+    "An Giang": 190, "Hậu Giang": 210, "Sóc Trăng": 220,
+    "Kiên Giang": 250, "Đắk Nông": 250, "Bạc Liêu": 270,
+    "Cà Mau": 300, "Lâm Đồng": 300, "Đà Lạt": 300,
+    "Ninh Thuận": 340, "Đắk Lắk": 350, "Buôn Ma Thuột": 350,
+    "Khánh Hòa": 440, "Nha Trang": 440, "Gia Lai": 500,
+    "Phú Yên": 550, "Kon Tum": 550, "Bình Định": 650,
+    "Quy Nhơn": 650, "Quảng Ngãi": 740, "Quảng Nam": 860,
+    "Đà Nẵng": 960, "Thừa Thiên Huế": 1050, "Huế": 1050,
+    "Quảng Trị": 1100, "Quảng Bình": 1200, "Hà Tĩnh": 1350,
+    "Nghệ An": 1400, "Vinh": 1400, "Thanh Hóa": 1500,
+    "Ninh Bình": 1600, "Hà Nam": 1650, "Nam Định": 1650,
+    "Thái Bình": 1680, "Hưng Yên": 1680, "Hải Dương": 1700,
+    "Hòa Bình": 1700, "Hà Nội": 1720, "Bắc Ninh": 1730,
+    "Hải Phòng": 1750, "Vĩnh Phúc": 1750, "Bắc Giang": 1750,
+    "Thái Nguyên": 1780, "Phú Thọ": 1800, "Quảng Ninh": 1800,
+    "Hạ Long": 1800, "Yên Bái": 1900, "Tuyên Quang": 1850,
+    "Lạng Sơn": 1850, "Bắc Kạn": 1850, "Sơn La": 1900,
+    "Hà Giang": 2000, "Lào Cai": 2000, "Điện Biên": 2050,
+    "Cao Bằng": 1950, "Lai Châu": 2100
+  }
+}
