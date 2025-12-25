@@ -7,13 +7,28 @@ import glob
 from collections import deque
 import re
 import time
-
+import unicodedata
 
 # ==========================================
-# 0. BẢNG PHÂN LOẠI (KHÔNG PHỤ THUỘC EXCEL)
+# 0. CHUẨN HOÁ DỮ LIỆU (KHÔNG ĐỤNG EXCEL)
+# Theo tiêu chí 3.2.4:
+# 1) Nơi ở: HN -> Hà Nội, HCM/Ho Chi Minh -> Thành phố Hồ Chí Minh, ...
+# 2) Ngành nghề theo trường: chuẩn hoá ngành con + suy ra trường/ngành nghề
+# 3) Sở thích theo trường: chuẩn hoá sở thích con + suy ra trường sở thích
+# 4) Bạn chung: chuẩn hoá theo ID (số), bỏ trùng
 # ==========================================
+
+def _strip_accents(s: str) -> str:
+    """Bỏ dấu tiếng Việt để so khớp nhập liệu thiếu dấu."""
+    if s is None:
+        return ""
+    s = str(s)
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+    return unicodedata.normalize("NFC", s)
+
 def _norm_key(s: str) -> str:
-    """Chuẩn hoá chuỗi để so khớp (không phân biệt hoa/thường, chuẩn hoá dấu gạch)."""
+    """Chuẩn hoá chuỗi để so khớp (không phân biệt hoa/thường, chuẩn hoá dấu gạch, khoảng trắng)."""
     if s is None:
         return ""
     s = str(s).strip()
@@ -23,8 +38,21 @@ def _norm_key(s: str) -> str:
     s = re.sub(r"\s+", " ", s)
     return s.casefold()
 
+def _norm_key_ascii(s: str) -> str:
+    """Key so khớp mạnh: bỏ dấu + chuẩn hoá."""
+    return _norm_key(_strip_accents(s))
 
-# Bảng Trường/ngành nghề -> Ngành nghề con
+def _loc_simplify_ascii(s: str) -> str:
+    """Chuẩn hoá key nơi ở: bỏ dấu + bỏ tiền tố tp/thành phố/tỉnh để map 'Hồ Chí Minh' -> 'Thành phố Hồ Chí Minh'."""
+    k = _norm_key_ascii(s)
+    if k == "-":
+        return "-"
+    k = k.replace(".", "")
+    k = re.sub(r"\b(thanh pho|tp|tinh)\b", "", k)
+    k = re.sub(r"\s+", " ", k).strip()
+    return k
+
+# ---- BẢNG TRƯỜNG/NGÀNH NGHỀ -> NGÀNH NGHỀ CON (CHUẨN) ----
 DEFAULT_INDUSTRY_GROUPS = {
     "Sinh viên": ["Sinh viên"],
     "Công nghệ & Kỹ thuật": [
@@ -55,7 +83,7 @@ DEFAULT_INDUSTRY_GROUPS = {
 # Dùng để nhận biết khi người dùng nhập thẳng "tên trường/ngành nghề" thay vì ngành con
 INDUSTRY_GROUP_KEYS_NORM = {_norm_key(g) for g in DEFAULT_INDUSTRY_GROUPS.keys()}
 
-# Bảng Sở thích -> Sở thích con
+# ---- BẢNG SỞ THÍCH -> SỞ THÍCH CON (CHUẨN) ----
 DEFAULT_INTEREST_GROUPS = {
     "Sáng tạo": ["Vẽ tranh", "Chụp ảnh", "Viết lách", "Làm đồ thủ công"],
     "Giải trí": ["Nghe nhạc", "Xem phim", "Chơi nhạc cụ", "Chơi game"],
@@ -64,23 +92,172 @@ DEFAULT_INTEREST_GROUPS = {
     "Khám phá": ["Du lịch", "Học ngoại ngữ", "Khám phá ẩm thực", "Tham gia hoạt động tình nguyện"],
 }
 
-# Tạo bảng tra nhanh: ngành nghề con -> trường/ngành nghề
+# ---- Alias tối thiểu để đáp ứng 3.2.4 (có thể mở rộng thêm) ----
+LOCATION_ALIASES = {
+    "hn": "Hà Nội",
+    "ha noi": "Hà Nội",
+    "hanoi": "Hà Nội",
+
+    "hcm": "Thành phố Hồ Chí Minh",
+    "hcmc": "Thành phố Hồ Chí Minh",
+    "tp hcm": "Thành phố Hồ Chí Minh",
+    "tphcm": "Thành phố Hồ Chí Minh",
+    "tp.hcm": "Thành phố Hồ Chí Minh",
+    "ho chi minh": "Thành phố Hồ Chí Minh",
+    "hồ chí minh": "Thành phố Hồ Chí Minh",
+    "sai gon": "Thành phố Hồ Chí Minh",
+    "saigon": "Thành phố Hồ Chí Minh",
+    "sg": "Thành phố Hồ Chí Minh",
+}
+
+INDUSTRY_CHILD_ALIASES = {
+    "it": "Công nghệ thông tin",
+    "cntt": "Công nghệ thông tin",
+    "cong nghe thong tin": "Công nghệ thông tin",
+
+    "ktpm": "Kỹ thuật phần mềm",
+    "software": "Kỹ thuật phần mềm",
+    "software engineering": "Kỹ thuật phần mềm",
+
+    "ai": "Trí tuệ nhân tạo",
+    "tri tue nhan tao": "Trí tuệ nhân tạo",
+
+    "attt": "An ninh mạng",
+    "cyber security": "An ninh mạng",
+    "security": "An ninh mạng",
+
+    "ds": "Khoa học dữ liệu",
+    "data science": "Khoa học dữ liệu",
+    "khoa hoc du lieu": "Khoa học dữ liệu",
+}
+
+INTEREST_CHILD_ALIASES = {
+    "chay": "Chạy bộ",
+    "chay bo": "Chạy bộ",
+    "run": "Chạy bộ",
+    "jogging": "Chạy bộ",
+
+    "gym": "Tập gym",
+    "tap gym": "Tập gym",
+
+    "game": "Chơi game",
+    "choi game": "Chơi game",
+    "gaming": "Chơi game",
+
+    "nhac": "Nghe nhạc",
+    "nghe nhac": "Nghe nhạc",
+
+    "phim": "Xem phim",
+    "xem phim": "Xem phim",
+
+    "anh": "Chụp ảnh",
+    "chup anh": "Chụp ảnh",
+    "photo": "Chụp ảnh",
+
+    "doc": "Đọc sách",
+    "doc sach": "Đọc sách",
+}
+
+# ---- Tạo bảng tra nhanh: ngành nghề con -> trường/ngành nghề ----
 INDUSTRY_CHILD_TO_GROUP = {}
 for _grp, _items in DEFAULT_INDUSTRY_GROUPS.items():
     INDUSTRY_CHILD_TO_GROUP[_norm_key(_grp)] = _grp
+    INDUSTRY_CHILD_TO_GROUP[_norm_key_ascii(_grp)] = _grp
     for _it in _items:
         INDUSTRY_CHILD_TO_GROUP[_norm_key(_it)] = _grp
-
+        INDUSTRY_CHILD_TO_GROUP[_norm_key_ascii(_it)] = _grp
 
 def infer_industry_group(industry_value: str) -> str:
-    """Suy ra Trường/ngành nghề từ giá trị 'Lĩnh vực/ngành nghề' trong Excel."""
     k = _norm_key(industry_value)
-    return INDUSTRY_CHILD_TO_GROUP.get(k, "-")
+    ka = _norm_key_ascii(industry_value)
+    return INDUSTRY_CHILD_TO_GROUP.get(k) or INDUSTRY_CHILD_TO_GROUP.get(ka) or "-"
 
 
-# ==========================================
-# 1. TẢI DỮ LIỆU TỪ EXCEL
-# ==========================================
+class DataNormalizer:
+    """Chuẩn hoá theo tiêu chí 3.2.4."""
+
+    def __init__(self, known_locations=None):
+        self.known_locations = set(known_locations or [])
+
+        self._loc_lookup = {}
+        for loc in self.known_locations:
+            self._loc_lookup[_norm_key(loc)] = loc
+            self._loc_lookup[_norm_key_ascii(loc)] = loc
+            self._loc_lookup[_loc_simplify_ascii(loc)] = loc
+
+        for k, v in LOCATION_ALIASES.items():
+            self._loc_lookup[_norm_key(k)] = v
+            self._loc_lookup[_norm_key_ascii(k)] = v
+            self._loc_lookup[_loc_simplify_ascii(k)] = v
+
+        self._interest_canon = {}
+        for items in DEFAULT_INTEREST_GROUPS.values():
+            for it in items:
+                self._interest_canon[_norm_key_ascii(it)] = it
+
+        self._industry_canon = {}
+        for items in DEFAULT_INDUSTRY_GROUPS.values():
+            for it in items:
+                self._industry_canon[_norm_key_ascii(it)] = it
+        for grp in DEFAULT_INDUSTRY_GROUPS.keys():
+            self._industry_canon[_norm_key_ascii(grp)] = grp
+
+    def normalize_location(self, raw: str) -> str:
+        if raw is None:
+            return "-"
+        raw = str(raw).strip()
+        if raw in ["", "nan", "NaN", "-"]:
+            return "-"
+        for key in (_norm_key(raw), _norm_key_ascii(raw), _loc_simplify_ascii(raw)):
+            if key in self._loc_lookup:
+                return self._loc_lookup[key]
+        return raw.title()
+
+    def normalize_industry_child(self, raw: str) -> str:
+        if raw is None:
+            return "-"
+        raw = str(raw).strip()
+        if raw in ["", "nan", "NaN", "-"]:
+            return "-"
+        k = _norm_key_ascii(raw)
+        if k in INDUSTRY_CHILD_ALIASES:
+            return INDUSTRY_CHILD_ALIASES[k]
+        if k in self._industry_canon:
+            return self._industry_canon[k]
+        return raw.title()
+
+    def normalize_interest_child(self, raw: str) -> str:
+        if raw is None:
+            return "-"
+        raw = str(raw).strip()
+        if raw in ["", "nan", "NaN", "-"]:
+            return "-"
+        k = _norm_key_ascii(raw)
+        if k in INTEREST_CHILD_ALIASES:
+            return INTEREST_CHILD_ALIASES[k]
+        if k in self._interest_canon:
+            return self._interest_canon[k]
+        return raw.title()
+
+    def normalize_friend_ids(self, raw: str):
+        if raw is None:
+            return []
+        s = str(raw).strip()
+        if s in ["", "nan", "NaN", "-"]:
+            return []
+        parts = [p.strip() for p in s.split(",")]
+        ids = [p for p in parts if p.isdigit()]
+        seen, out = set(), []
+        for x in ids:
+            if x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+
+
+NORMALIZER = None
+
+
 def load_data(folder_path, json_filename='ketban.json'):
     excel_files = glob.glob(os.path.join(folder_path, "*.xlsx"))
     excel_files = [f for f in excel_files if not os.path.basename(f).startswith('~$')]
@@ -106,9 +283,6 @@ def load_data(folder_path, json_filename='ketban.json'):
         return None, {}, [], {}
 
 
-# ==========================================
-# 2. ĐỐI TƯỢNG NGƯỜI DÙNG
-# ==========================================
 class User:
     def __init__(self, uid, name, dob, gender, location, interests, industry, marital, friends_str):
         def clean(val):
@@ -120,17 +294,25 @@ class User:
         self.name = clean(name).title()
         self.dob = clean(dob)
         self.gender = clean(gender).title()
-        self.location = clean(location).title()
 
-        # Ngành nghề con (đọc từ Excel / input)
-        self.industry = clean(industry).title()
-        # Trường/ngành nghề suy ra từ mapping
+        raw_loc = clean(location)
+        self.location = NORMALIZER.normalize_location(raw_loc) if NORMALIZER else raw_loc.title()
+
+        raw_ind = clean(industry)
+        self.industry = NORMALIZER.normalize_industry_child(raw_ind) if NORMALIZER else raw_ind.title()
         self.industry_group = infer_industry_group(self.industry)
 
         self.marital = clean(marital).title()
 
-        self.interests = [x.strip().title() for x in str(interests).split(';') if x.strip()] if clean(interests) != "-" else []
-        self.friends_ids = [x.strip() for x in str(friends_str).split(',') if x.strip().isdigit()] if clean(friends_str) != "-" else []
+        raw_its = clean(interests)
+        if raw_its == "-":
+            self.interests = []
+        else:
+            tokens = [t.strip() for t in re.split(r"[;,]", str(raw_its)) if t.strip()]
+            self.interests = [NORMALIZER.normalize_interest_child(t) if NORMALIZER else t.title() for t in tokens]
+
+        self.friends_ids = NORMALIZER.normalize_friend_ids(friends_str) if NORMALIZER else \
+            [x.strip() for x in str(friends_str).split(',') if x.strip().isdigit()]
 
     @classmethod
     def from_row(cls, row):
@@ -144,20 +326,13 @@ class User:
 class SocialGraph:
     def __init__(self, users, loc_map, bonus_rules, interest_groups):
         self.users = {u.id: u for u in users}
-
-        # adj_list: dùng để DUYỆT BFS/DFS/A* (có thể chứa liên kết gợi ý NEW_USER)
-        self.adj_list = {u.id: set(u.friends_ids) for u in users}
-
-        # friend_adj: CHỈ bạn bè thật từ Excel (để tính "bạn chung" chính xác)
         self.friend_adj = {u.id: set(u.friends_ids) for u in users}
-
-        # strong_neighbors: "bạn proxy" tự động cho NEW_USER (không cần nhập)
+        self.adj_list = {u.id: set(u.friends_ids) for u in users}
         self.strong_neighbors = {}
 
         self.loc_map = loc_map
         self.bonus_rules = bonus_rules
 
-        # Gộp bảng sở thích JSON (nếu có) với bảng mặc định
         merged_groups = {k: list(v) for k, v in DEFAULT_INTEREST_GROUPS.items()}
         for g, items in (interest_groups or {}).items():
             if g not in merged_groups:
@@ -165,33 +340,25 @@ class SocialGraph:
             else:
                 merged_groups[g] = list(dict.fromkeys(merged_groups[g] + list(items)))
         self.interest_groups = merged_groups
-
-        # Dạng chuẩn hoá để so khớp nhanh
         self._interest_groups_norm = {g: {_norm_key(x) for x in items} for g, items in self.interest_groups.items()}
 
     def _proxy_friend_set(self, uid: str) -> set:
-        """
-        Tập dùng để tính "bạn chung":
-        - Nếu là NEW_USER: dùng strong_neighbors[NEW_USER] (tự động, không cần nhập)
-        - Nếu là user thường: dùng friend_adj (bạn thật từ Excel)
-        """
         if uid in self.strong_neighbors:
             return self.strong_neighbors.get(uid, set())
         return self.friend_adj.get(uid, set())
 
+    def common_friend_ids(self, id_a: str, id_b: str) -> set:
+        return self._proxy_friend_set(id_a) & self._proxy_friend_set(id_b)
+
     def add_new_user(self, new_user):
-        """
-        Thêm NEW_USER + tạo liên kết gợi ý để BFS/DFS có candidate.
-        Đồng thời tạo strong_neighbors (tự động) để tính "bạn chung" mà KHÔNG cần nhập.
-        """
         self.users[new_user.id] = new_user
+        self.friend_adj[new_user.id] = set()
         self.adj_list[new_user.id] = set()
 
-        # NEW_USER không có bạn thật trong Excel => friend_adj rỗng
-        self.friend_adj[new_user.id] = set()
-
-        # 1) Tạo liên kết gợi ý (loose) để duyệt candidate
         new_loc_val = self.loc_map.get(new_user.location)
+        new_int_set = {_norm_key(x) for x in new_user.interests}
+
+        # Liên kết gợi ý để có candidate
         for uid, u in self.users.items():
             if uid == new_user.id:
                 continue
@@ -201,34 +368,31 @@ class SocialGraph:
                 conn = True
             elif new_loc_val is not None and self.loc_map.get(u.location) == new_loc_val:
                 conn = True
-            elif set(new_user.interests) & set(u.interests):
-                conn = True
-            elif new_user.industry_group != "-" and new_user.industry_group == u.industry_group:
-                conn = True
+            else:
+                u_int_set = {_norm_key(x) for x in u.interests}
+                if new_int_set & u_int_set:
+                    conn = True
+                elif new_user.industry_group != "-" and new_user.industry_group == u.industry_group:
+                    conn = True
 
             if conn:
                 self.adj_list[new_user.id].add(uid)
                 self.adj_list[uid].add(new_user.id)
 
-        # 2) Tạo "strong_neighbors" (strict) để tính bạn chung, tránh bị dính hàng loạt
+        # Strong neighbors để tính bạn chung tự động (giảm bị +1 hàng loạt)
         strong = set()
-        new_int_norm = {_norm_key(x) for x in new_user.interests}
-
         for uid, u in self.users.items():
             if uid == new_user.id:
                 continue
 
-            u_int_norm = {_norm_key(x) for x in u.interests}
-            common_int = new_int_norm & u_int_norm
+            u_int_set = {_norm_key(x) for x in u.interests}
+            common_int = new_int_set & u_int_set
 
             is_strong = False
-            # Cùng nơi ở (mạnh)
             if new_user.location != "-" and new_user.location == u.location:
                 is_strong = True
-            # Cùng trường/ngành nghề (mạnh)
             elif new_user.industry_group != "-" and new_user.industry_group == u.industry_group:
                 is_strong = True
-            # Trùng >= 2 sở thích (mạnh)
             elif len(common_int) >= 2:
                 is_strong = True
 
@@ -238,39 +402,23 @@ class SocialGraph:
         self.strong_neighbors[new_user.id] = strong
 
     def calculate_score(self, user_a, user_b):
-        """
-        3.3.2. Quy tắc cộng điểm (MỚI)
-
-        - Trùng nơi ở: +1
-        - Có ít nhất 1 bạn chung: +1
-        - Sở thích:
-            + Trùng sở thích (trong trường sở thích) → +2 điểm / sở thích
-            + Trùng trường sở thích → +1 điểm
-              (cùng 1 nhóm nhưng không trùng sở thích con trong nhóm đó)
-        - Ngành nghề:
-            + Trùng ngành nghề (trong trường ngành nghề) → +2 điểm
-              (ngành nghề con trùng nhau)
-            + Trùng trường ngành nghề → +1 điểm
-              (trường/ngành nghề trùng nhau, khi không trùng ngành con)
-        """
         score = 0
 
-        # 1) Trùng nơi ở (+1)
+        # Trùng nơi ở: +1
         if user_a.location != "-" and user_a.location == user_b.location:
             score += 1
 
-        # 2) Có ít nhất 1 bạn chung (+1) - dùng proxy friend set (tự động cho NEW_USER)
-        if self._proxy_friend_set(user_a.id) & self._proxy_friend_set(user_b.id):
+        # Có ít nhất 1 bạn chung: +1
+        if self.common_friend_ids(user_a.id, user_b.id):
             score += 1
 
-        # 3) Sở thích: trùng sở thích con (+2 / sở thích)
+        # Sở thích: +2 / sở thích trùng
         a_int = {_norm_key(x) for x in user_a.interests}
         b_int = {_norm_key(x) for x in user_b.interests}
         common = a_int & b_int
         score += len(common) * 2
 
-        # 4) Sở thích: trùng trường sở thích (+1)
-        # Cùng nhóm nhưng KHÔNG trùng sở thích con trong chính nhóm đó.
+        # Trùng trường sở thích: +1 (cùng nhóm nhưng không trùng sở thích con trong nhóm đó)
         for members_norm in self._interest_groups_norm.values():
             a_in = a_int & members_norm
             b_in = b_int & members_norm
@@ -278,24 +426,19 @@ class SocialGraph:
                 score += 1
                 break
 
-        # 5) Ngành nghề:
-        # +2 nếu trùng ngành nghề con (industry) (và industry không phải là tên group)
+        # Ngành nghề: +2 nếu trùng ngành con, else +1 nếu trùng trường/ngành nghề
         a_ind = _norm_key(user_a.industry)
         b_ind = _norm_key(user_b.industry)
 
         if a_ind != "-" and a_ind == b_ind and a_ind not in INDUSTRY_GROUP_KEYS_NORM:
             score += 2
         else:
-            # +1 nếu trùng trường/ngành nghề (industry_group)
             if user_a.industry_group != "-" and user_a.industry_group == user_b.industry_group:
                 score += 1
 
         return score
 
 
-# ==========================================
-# 3. THUẬT TOÁN (BFS, DFS, A*)
-# ==========================================
 def run_bfs(graph, start_id):
     results = []
     queue = deque([start_id])
@@ -347,12 +490,8 @@ def run_astar(graph, start_id, goal_id):
     return None
 
 
-# ==========================================
-# 4. HIỂN THỊ
-# ==========================================
-def display_profile(u, label, me_id, graph, score, show_score=True):
-    # Bạn chung hiển thị theo đúng tập đang dùng để chấm điểm
-    common_ids = graph._proxy_friend_set(me_id).intersection(graph._proxy_friend_set(u.id))
+def display_profile(u, label, me_id, graph, score):
+    common_ids = graph.common_friend_ids(me_id, u.id)
     common_names = [graph.users[cid].name for cid in common_ids if cid in graph.users]
 
     print(f"\n{label}. {u.name.upper()} (+{score})")
@@ -360,9 +499,9 @@ def display_profile(u, label, me_id, graph, score, show_score=True):
     print(f"Giới tính: {u.gender}")
     print(f"Nơi ở: {u.location}")
     print(f"Ngành nghề: {u.industry} (Trường: {u.industry_group})")
-    print(f"Sở thích: {', '.join(u.interests) if u.interests else '-'} ")
+    print(f"Sở thích: {', '.join(u.interests) if u.interests else '-'}")
     print(f"Tình trạng hôn nhân: {u.marital}")
-    print(f"Bạn chung: {', '.join(common_names) if common_names else '-'} ")
+    print(f"Bạn chung: {', '.join(common_names) if common_names else '-'}")
     print("-" * 45)
 
 
@@ -375,17 +514,21 @@ def get_input():
     g = input("3. Giới tính *: ").strip() or "-"
     l = input("4. Nơi ở *: ").strip() or "-"
     ind = input("5. Ngành nghề: ").strip() or "-"
-    its = input("6. Sở thích (cách nhau bởi ;)*: ").strip() or "-"
+    its = input("6. Sở thích (cách nhau bởi ; hoặc ,)*: ").strip() or "-"
     m = input("7. Tình trạng hôn nhân *: ").strip() or "-"
-    # KHÔNG CẦN mục 8
     return User("NEW_USER", n, d, g, l, its, ind, m, "")
 
 
 def main():
+    global NORMALIZER
+
     path = r"E:\ttnt"
     df, l_m, b_r, i_g = load_data(path)
     if df is None:
         return
+
+    known_locations = df['Nơi ở'].dropna().astype(str).unique().tolist()
+    NORMALIZER = DataNormalizer(known_locations=known_locations)
 
     users = [User.from_row(r) for _, r in df.iterrows()]
     graph = SocialGraph(users, l_m, b_r, i_g)
@@ -402,12 +545,12 @@ def main():
 
     print("\n" + "*" * 60 + "\n DANH SÁCH TOP 30 NGƯỜI ĐÃ LỌC\n" + "*" * 60)
     for i, c in enumerate(top_30_all):
-        display_profile(c['user'], i + 1, me.id, graph, c['score'], True)
+        display_profile(c['user'], i + 1, me.id, graph, c['score'])
 
     if top_30_all:
         top_1 = top_30_all[0]
         print("\n" + "!" * 60 + "\n          GỢI Ý PHÙ HỢP NHẤT (TOP-1)\n" + "!" * 60)
-        display_profile(top_1['user'], "TOP-1", me.id, graph, top_1['score'], True)
+        display_profile(top_1['user'], "TOP-1", me.id, graph, top_1['score'])
 
         print("\n CHI PHÍ/ĐƯỜNG ĐI ĐẾN TOP 1 (A*)")
         path_astar = run_astar(graph, me.id, top_1['user'].id)
@@ -420,11 +563,11 @@ def main():
 
     print("\n" + "=" * 60 + "\n DANH SÁCH TOP 30 LỌC TỪ BFS \n" + "=" * 60)
     for i, c in enumerate(sorted(bfs_res, key=lambda x: x['score'], reverse=True)[:30]):
-        display_profile(c['user'], i + 1, me.id, graph, c['score'], True)
+        display_profile(c['user'], i + 1, me.id, graph, c['score'])
 
     print("\n" + "=" * 60 + "\n DANH SÁCH TOP 30 LỌC TỪ DFS \n" + "=" * 60)
     for i, c in enumerate(sorted(dfs_res, key=lambda x: x['score'], reverse=True)[:30]):
-        display_profile(c['user'], i + 1, me.id, graph, c['score'], True)
+        display_profile(c['user'], i + 1, me.id, graph, c['score'])
 
     print(f"\n THỜI GIAN THỰC THI TỔNG CỘNG: {time.time() - start_exec:.4f} giây")
 
